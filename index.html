@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>maps3d · elevation to mesh</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 40 40" aria-hidden="true">
+        <path d="M2 27 Q11 19 20 24 T38 20" />
+        <path d="M2 32 Q11 25 20 30 T38 26" />
+        <path d="M2 22 Q11 13 20 18 T38 13" />
+        <circle cx="20" cy="24" r="2.4" class="benchmark" />
+      </svg>
+      <div class="wordmark">
+        <span class="name">maps3d</span>
+        <span class="tag">elevation → mesh</span>
+      </div>
+    </div>
+    <div id="source-badge" class="source-badge" hidden></div>
+  </header>
+
+  <main class="layout">
+    <aside class="rail">
+      <section class="block">
+        <h2 class="eyebrow">Location</h2>
+        <div class="search">
+          <input id="search-input" type="text" placeholder="Search a place — e.g. Mount Fuji" autocomplete="off" />
+          <button id="search-btn" class="search-btn" type="button">Search</button>
+        </div>
+        <ul id="search-results" class="search-results" hidden></ul>
+        <div id="map" class="map"></div>
+        <p id="coord" class="coord">search for a place, or click the map</p>
+        <div class="presets" id="presets"></div>
+      </section>
+
+      <section class="block">
+        <h2 class="eyebrow">Terrain</h2>
+
+        <label class="field">
+          <span class="label-row"><span>Area</span><output id="km-out">10 km</output></span>
+          <input id="km" type="range" min="2" max="40" step="1" value="10" />
+        </label>
+
+        <label class="field">
+          <span class="label-row"><span>Resolution</span><output id="res-out">140</output></span>
+          <input id="res" type="range" min="48" max="240" step="4" value="140" />
+        </label>
+
+        <label class="field">
+          <span class="label-row"><span>Vertical exaggeration</span><output id="exag-out">1.8×</output></span>
+          <input id="exag" type="range" min="1" max="40" step="1" value="18" />
+        </label>
+
+        <div class="field">
+          <span class="label-row"><span>Model type</span></span>
+          <div class="seg" id="mode">
+            <button type="button" class="seg-btn is-active" data-mode="adaptive">Adaptive · TIN</button>
+            <button type="button" class="seg-btn" data-mode="solid">Solid · printable</button>
+          </div>
+          <p class="hint" id="mode-hint">Lightweight triangulated surface — spends triangles only where the ground is rough.</p>
+        </div>
+
+        <div class="field">
+          <span class="label-row"><span>Surface</span></span>
+          <div class="seg" id="surface">
+            <button type="button" class="seg-btn is-active" data-surface="elevation">Elevation tint</button>
+            <button type="button" class="seg-btn" data-surface="map">Road map</button>
+          </div>
+          <p class="hint" id="surface-hint">Coloured by height using the hypsometric ramp shown at right.</p>
+        </div>
+
+        <label class="field" id="detail-field">
+          <span class="label-row"><span>Detail</span><output id="detail-out">55%</output></span>
+          <input id="detail" type="range" min="10" max="95" step="5" value="55" />
+        </label>
+
+        <button id="generate" class="generate">Generate model</button>
+      </section>
+
+      <section class="block">
+        <h2 class="eyebrow">Export</h2>
+        <p class="hint">glTF carries the surface colours or the draped map. OBJ and STL are geometry only — STL is the one to slice for printing.</p>
+        <div class="exports" id="exports">
+          <button class="export" data-fmt="gltf" disabled>.glTF</button>
+          <button class="export" data-fmt="obj" disabled>.obj</button>
+          <button class="export" data-fmt="stl" disabled>.stl</button>
+        </div>
+      </section>
+    </aside>
+
+    <section class="stage">
+      <div id="viewer" class="viewer">
+        <div id="empty" class="empty">
+          <svg viewBox="0 0 80 60" aria-hidden="true">
+            <path d="M4 44 Q22 28 40 36 T76 30" />
+            <path d="M4 52 Q22 38 40 46 T76 40" />
+            <path d="M4 36 Q22 18 40 26 T76 18" />
+          </svg>
+          <p>Pick a place, then generate a 3D model of its terrain.</p>
+        </div>
+        <div id="spinner" class="spinner" hidden><span></span>surveying terrain…</div>
+      </div>
+
+      <div class="attribution" id="attribution" hidden>© OpenStreetMap contributors</div>
+
+      <div class="legend" id="legend" hidden>
+        <span class="legend-hi" id="legend-hi">—</span>
+        <div class="legend-ramp"></div>
+        <span class="legend-lo" id="legend-lo">—</span>
+        <span class="legend-cap">elev.</span>
+      </div>
+
+      <div class="stats" id="stats" hidden>
+        <div class="stat"><span class="k">triangles</span><span class="v" id="s-tris">—</span></div>
+        <div class="stat"><span class="k">vertices</span><span class="v" id="s-verts">—</span></div>
+        <div class="stat"><span class="k">relief</span><span class="v" id="s-relief">—</span></div>
+        <div class="stat"><span class="k">watertight</span><span class="v" id="s-water">—</span></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
